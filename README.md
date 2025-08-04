@@ -1,2 +1,7 @@
-# leiden_thesis_public
-A public repository showcasing all simulation studies, framework validation and edge case analyses of my Leiden Master thesis.
+# Leiden Master Thesis R Code
+The repository mirrors the methodoly subsections of
+1. Exploration
+2. Confirmation
+3. Edge Cases
+
+The R version used for this master's thesis was: 4.4.1 (2024-06-14)
