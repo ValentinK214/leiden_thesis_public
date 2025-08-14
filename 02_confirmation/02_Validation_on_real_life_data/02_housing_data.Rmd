@@ -1,0 +1,1282 @@
+---
+title: "Real life datasets"
+author: "Valentin Kodderitzsch 3895157"
+date: "2025-06-07"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Load the data
+
+```{r}
+set.seed(3895157)
+```
+
+## Boston
+
+```{r}
+# Load necessary package
+library(MASS)
+
+# Load Boston dataset
+data("Boston")
+
+# Detach MASS so that I can use dplyr commands
+detach("package:MASS", unload = TRUE)
+
+# Chekc for NAs
+colSums(is.na(Boston))
+```
+
+```{r}
+boston_df = list(y = Boston$medv,
+                 X = Boston %>%
+                   dplyr::select(-medv, -chas))
+
+
+str(boston_df$X)
+
+# Number of samples per covariate
+nrow(boston_df$X) / ncol(boston_df$X)
+```
+
+
+```{r}
+summary(boston_df$y)
+```
+
+
+## Ames
+
+```{r}
+library(AmesHousing)
+
+Ames = make_ordinal_ames()
+Ames = as.data.frame(Ames) # Remove spec meta data
+
+# str(Ames)
+```
+
+
+```{r}
+colSums(is.na(Ames))
+```
+
+
+```{r}
+# Keep only numeric predictors
+Ames <- Ames %>%
+  select(where(is.numeric))
+
+# str(Ames)
+```
+
+
+```{r}
+ames_df = list(y = (Ames$Sale_Price / 10^3 ),
+               X = Ames %>% select(-Sale_Price))
+
+# Number of samples per covariate
+nrow(ames_df$X) / ncol(ames_df$X)
+
+
+ames_df$X
+```
+
+```{r}
+summary(ames_df$y)
+```
+
+
+## California
+
+```{r}
+library(qacr) 
+
+# Chekc for NA and remove
+colSums(is.na(housing))
+housing_clean = na.omit(housing)
+
+# Create california_df object similar to boston_df
+california_df = list(
+  y = housing_clean$median_house_value / 10^3,
+  X = housing_clean %>%
+    select(-median_house_value, -ocean_proximity)
+)
+
+# View structure
+# str(california_df$X)
+
+# Number of samples per covariate
+nrow(california_df$X) / ncol(california_df$X)
+```
+```{r}
+summary(california_df$y)
+```
+
+
+```{r}
+summary(housing)
+```
+
+## Insurance (Noise Fail)
+
+```{r}
+colSums(is.na(insurance))
+
+str(insurance)
+```
+
+```{r}
+insurance_df = list(y = insurance$charges / 10^3,
+                 X = insurance %>%
+                   dplyr::select(age, bmi, children))
+
+
+# View structure
+str(insurance_df$X)
+
+# Number of samples per covariate
+nrow(insurance_df$X) / ncol(insurance_df$X)
+```
+
+```{r}
+summary(insurance_df$y)
+```
+
+
+
+## Employed (Curvature Fail)
+
+```{r}
+data("longley")
+
+colSums(is.na(longley))
+
+str(longley)
+```
+
+```{r}
+employed_df = list(y = longley$Employed,
+                 X = longley %>%
+                   dplyr::select(-Employed))
+
+
+# View structure
+str(employed_df$X)
+
+# Number of samples per covariate
+nrow(employed_df$X) / ncol(employed_df$X)
+```
+
+```{r}
+summary(employed_df$y)
+```
+
+
+
+##  Thesis table - Meta feature summary
+
+```{r}
+dfs_summary_table = data.frame(name = c("Boston", "Ames", "California", "Insurance", "Longely"),
+                               rows = c(nrow(boston_df$X), nrow(ames_df$X), nrow(california_df$X), nrow(insurance_df$X), nrow(employed_df$X)),
+                               cols = c(ncol(boston_df$X), ncol(ames_df$X), ncol(california_df$X), ncol(insurance_df$X), ncol(employed_df$X)),
+                               mean_y = c(mean(boston_df$y), mean(ames_df$y), mean(california_df$y), mean(insurance_df$y), mean(employed_df$y)),
+                               var_y = c(var(boston_df$y), var(ames_df$y), var(california_df$y), var(insurance_df$y), var(employed_df$y)) )
+
+dfs_summary_table$n_per_cov = dfs_summary_table$row / dfs_summary_table$cols
+
+dfs_summary_table$dispersion = dfs_summary_table$var_y / dfs_summary_table$mean_y
+
+dfs_summary_table
+```
+
+
+
+# 2. Visualization
+
+Do not plot employed as it is on a different scale
+
+```{r}
+# Compute densities
+d1 <- density(boston_df$y)
+d2 <- density(ames_df$y)
+d3 = density(california_df$y)
+d4 = density(insurance_df$y)
+
+# Set axis limits based on both
+x_range <- range(d1$x, d2$x, d3$x, d4$x)
+y_max <- max(d1$y, d2$y, d3$y, d4$y)
+
+# Plot with fixed xlim and ylim
+plot(d1, main = "Density of y: Boston vs Ames", col = "blue", lwd = 2,
+     xlim = x_range, ylim = c(0, y_max))
+
+# Overlay the second density
+lines(d2, col = "red", lwd = 2)
+lines(d3, col = "green", lwd = 2)
+lines(d4, col = "orange", lwd = 2)
+
+# Add legend
+legend("topright", legend = c("Boston", "Ames", "Cali", "Insurance"), 
+       col = c("blue", "red", "green", "orange"), lwd = 2)
+```
+
+
+```{r}
+plot_x_y_pairs = function(df) {
+  X = df$X
+  y = df$y
+  
+  for (col in 1:ncol(X)) {
+    plot(X[, col], y)
+  }
+}
+
+plot_x_y_pairs(boston_df)
+```
+
+
+```{r}
+plot_x_y_pairs(ames_df)
+```
+
+
+```{r}
+plot_x_y_pairs(california_df)
+```
+
+```{r}
+plot_x_y_pairs(insurance_df)
+```
+
+```{r}
+plot_x_y_pairs(employed_df)
+```
+
+# 3. Helper functions
+
+I need to create 2 train-test functions. Each train-test function needs a different set of landmarking algorithms. 
+
+The original landmarking algorithms are:
+1. Elastic net
+2. Random forest
+3. Linear regression 
+4. XGBoost
+5. SVM
+
+The updated landmarking algorithms are:
+1. **GAM**
+2. Random forest
+3. Linear regression 
+4. XGBoost
+5. SVM
+
+So only Elastic net has been replaced by GAM.
+
+
+##  Summary tables
+
+Helper functions
+
+```{r}
+get_MSE = function(test_Y, test_Y_Hat) {
+  mean( (test_Y - test_Y_Hat)^2 )
+}
+
+get_NSE <- function(test_Y, test_Y_Hat) {
+  numerator <- sum((test_Y - test_Y_Hat)^2)
+  denominator <- sum((test_Y - mean(test_Y))^2)
+  1 - (numerator / denominator)
+}
+
+get_RSE <- function(test_Y, test_Y_Hat) {
+  numerator <- sum((test_Y - test_Y_Hat)^2)
+  denominator <- sum((test_Y - mean(test_Y))^2)
+  numerator / denominator
+}
+
+get_RRMSE <- function(test_Y, test_Y_Hat) {
+  rmse <- sqrt(mean((test_Y - test_Y_Hat)^2))
+  rmse / mean(test_Y)
+}
+
+get_NRMSE <- function(test_Y, test_Y_Hat) {
+  rmse <- sqrt(mean((test_Y - test_Y_Hat)^2))
+  rmse / (sd(test_Y) ) # max(test_Y) - min(test_Y)
+}
+
+get_MAPE <- function(test_Y, test_Y_Hat) {
+  if (any(test_Y == 0)) {
+    warning("My warning from get_MAP: test_Y contains zeros")
+  } else {
+    mean(abs( (test_Y - test_Y_Hat)/test_Y )) * 100
+  }
+}
+
+get_all_6_metrics <- function(test_Y, test_Y_Hat) {
+  list(
+    MSE   = get_MSE(test_Y, test_Y_Hat),
+    NSE   = get_NSE(test_Y, test_Y_Hat),
+    RSE   = get_RSE(test_Y, test_Y_Hat),
+    RRMSE = get_RRMSE(test_Y, test_Y_Hat),
+    NRMSE = get_NRMSE(test_Y, test_Y_Hat),
+    MAPE  = get_MAPE(test_Y, test_Y_Hat)
+  )
+}
+```
+
+
+My metrics
+
+
+```{r}
+# Performance ratio
+get_PR = function(MSE_null, MSE_model) {
+  sqrt(MSE_null / MSE_model)
+}
+
+# Min max
+get_min_max = function(MSE_null, MSE_model) {
+  # (MSE_null - MSE_model) / MSE_null
+  1 - (MSE_model / MSE_null)
+}
+
+# ND-RMSE
+get_NDRMSE = function(MSE_null, MSE_model, test_Y) {
+  numerator =  sqrt(MSE_null) - sqrt(MSE_model) 
+  denominator = max(test_Y) - min(test_Y)
+  numerator / denominator
+  
+  # sqrt(MSE_null) / sqrt(MSE_model)
+}
+```
+
+
+### Final function (original)
+
+```{r}
+# Load all libraries
+library(glmnet)
+library(randomForest)
+library(xgboost)
+library("e1071")
+library(tidyr)
+library(dplyr)
+```
+
+
+**FUNCTION EXPLANATION**: `generate_summary_table`  
+
+**Args:**  
+1. **X** (matrix/data frame): predictor variables.  
+2. **y** (numeric vector): response variable.  
+3. **training_percentage** (numeric): proportion of data used for training (default: 0.75).  
+4. **signal_type** (character): passed to `true_signal(...)` to specify the signal type.  
+
+**Returns:**  
+- A data frame (7x10) summarizing model performance across 9 metrics (MSE, NSE, RSE, RRMSE, NRMSE, MAPE, PR, MinMax, NDRMSE) for 7 algorithms:  
+  - True signal (oracle)  
+  - Dummy/null model  
+  - Elastic net  
+  - Random forest  
+  - Linear regression  
+  - XGBoost  
+  - SVM  
+
+**Main logic:**  
+1. Split data into training and test sets.  
+2. Define a helper to compute the true signal for all rows in `X` -> Needed by the Oracle 
+3. Fit the following models on the training set:  
+   - True signal (oracle, no noise)  
+   - Null model (mean prediction)  
+   - Elastic net (alpha = 0.5)  
+   - Random forest  
+   - Linear regression  
+   - XGBoost  
+   - SVM (epsilon regression)  
+4. Generate predictions on the test set for each model.  
+5. Compute 6 base metrics via `get_all_6_metrics()` for each model.  
+6. Calculate additional metrics:  
+   - **PR** (performance ratio via `get_PR()`)  
+   - **MinMax** (via `get_min_max()`)  
+   - **NDRMSE** (via `get_NDRMSE()`)  
+7. Combine all results into a summary table.  
+8. Reshape data for easier comparison (`pivot_longer` to `pivot_wider`) and sort models by PR in descending order.  
+9. Return the final summary data frame.  
+
+
+
+```{r}
+generate_summary_table = function(X, y, training_percentage = 0.75) {
+  # Generate train test split
+  train_percentage = training_percentage
+  train_size = floor(nrow(X) * train_percentage) 
+
+  # Ensure identical train test split even if I re-run the generate summmary table function
+  # set.seed(3895157)
+  train <- sample(1:nrow(X), size = train_size)
+  test <- which(!(1:nrow(X) %in% train))
+  
+  X = as.matrix(X)
+  
+  ##################################################
+  
+  # Model fitting
+  ## Null model
+  null_model = y[train]
+  
+  ## Elatic net
+  # Set alpha = 0.5 for balanced elastic net
+  cv_elastic = cv.glmnet(
+    x = X[train, ],
+    y = y[train],
+    alpha = 0.5,
+    family = "gaussian",
+    nfolds = 5
+  )
+  
+  
+  # Fit on entire dataset using optimal lambda value
+  model_elastic = glmnet(x = X[train, ],
+                         y = y[train],
+                         lambda = cv_elastic$lambda.1se)
+  
+  ## Random forest
+  rf = randomForest(x = as.matrix(X[train, ]), y = y[train] )
+  
+  ## Linear regression
+  df_lin = as.data.frame(X) # Create df for lm function
+  df_lin$y = y
+  
+  model_linear = lm(y ~ ., data = df_lin[train, ])
+  
+  ## XGboost
+  # Convert your data to a DMatrix (recommended for xgboost)
+  dtrain <- xgb.DMatrix(data = as.matrix(X[train, ]), label = y[train])
+
+  # Set parameters
+  params <- list(
+    objective = "reg:squarederror",  # for regression
+    lambda = 1,   # L2 regularization (ridge)
+    alpha = 1     # L1 regularization (lasso)
+  )
+  
+  # Fit the model with default parameters + regularization
+  model_xgb <- xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = 100,   # number of boosting rounds (iterations), can tune this
+    verbose = 1      # print progress
+  )
+  
+  ## SVM
+  model_svm <- svm(
+    x = X[train, ],    # training predictors
+    y = y[train],      # training response
+    type = "eps-regression" # regression type (default is epsilon-regression)
+  )
+  
+  
+  ##################################################
+  
+  # Model Evaluation
+  
+  ## Null model
+  # Make predictions
+  dummy_pred_r2 = rep(mean(y[train]), length(test))
+  # Evaluate predictions
+  metrics.null_R2 = get_all_6_metrics(test_Y = y[test], test_Y_Hat = dummy_pred_r2)
+  
+  ## Elatic net
+  # Make predictions
+  elastic_pred = stats::predict(model_elastic, newx = X[test, ])
+  # Evaluate predictions
+  metrics.elastic = get_all_6_metrics(test_Y = y[test], test_Y_Hat = elastic_pred)
+  
+  ## Random forest
+  # Make predictions
+  rf_pred = stats::predict(rf, newdata = as.matrix(X[test, ] ))
+  # Make predictions
+  rf_pred = stats::predict(rf, newdata = as.matrix(X[test, ] ))
+  # Evaluate predictions
+  metrics.rf = get_all_6_metrics(test_Y = y[test], test_Y_Hat = rf_pred)
+  
+  ## Linear regression
+  # Make predictions
+  lin_data_X = subset(df_lin, select = -c(y))
+  lm_pred = stats::predict(model_linear, newdata = lin_data_X[test, ] )
+  # Evaluate predictions
+  metrics.linear = get_all_6_metrics(test_Y = y[test], test_Y_Hat = lm_pred)
+  
+  ## XGboost
+  # Make predictions
+  xgboost_pred = predict(model_xgb, newdata = as.matrix(X[test, ]))
+  # Evaluate predictions
+  metrics.xgb = get_all_6_metrics(test_Y = y[test], test_Y_Hat = xgboost_pred)
+  
+  ## SVM
+  # Make predictions
+  svm_pred = predict(model_svm, newdata = X[test, ])
+  # Evaluate predictions
+  metrics.svm = get_all_6_metrics(test_Y = y[test], test_Y_Hat = svm_pred)
+  
+  ##################################################
+  
+  # Model Ratios
+
+  ## Null model -> Is used for PR so NA
+  
+  ## Elatic net
+  ratio.elastic.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.elastic$MSE)  
+  
+  ## Random forest
+  ratio.rf.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE) 
+  
+  ## Linear regression
+  ratio.linear.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE)  
+  
+  ## XGboost
+  ratio.xgb.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE)  
+  
+  ## SVM
+  ratio.svm.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE)
+  
+    ##################################################
+  
+  # Model Min-Max
+
+  ## Null model -> Is used for PR so NA
+  
+  ## Elatic net
+  min_max.elastic.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.elastic$MSE)  
+  
+  ## Random forest
+  min_max.rf.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE) 
+  
+  ## Linear regression
+  min_max.linear.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE)  
+  
+  ## XGboost
+  min_max.xgb.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE)  
+  
+  ## SVM
+  min_max.svm.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE)  
+  
+  ##################################################
+  
+  # ND-RMSE
+  ## Null model -> Is used for PR so NA
+  
+  ## Elatic net
+  nd_rmse.elastic.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.elastic$MSE,
+                              test_Y = y[test])  
+  
+  ## Random forest
+  nd_rmse.rf.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE,
+                             test_Y = y[test]) 
+  
+  ## Linear regression
+  nd_rmse.linear.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE,
+                              test_Y = y[test])  
+  
+  ## XGboost
+  nd_rmse.xgb.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE,
+                              test_Y = y[test])  
+  
+  ## SVM
+  nd_rmse.svm.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE,
+                              test_Y = y[test])  
+
+  
+  ##################################################
+  
+  # Summary
+  df_summary = data.frame(
+    Metric = c(names(metrics.null_R2), "PR", "MinMax", "NDRMSE"),
+    Dummy_R2 = c(unname(unlist(metrics.null_R2)), NA, NA, NA),
+    elastic_net = c(unname(unlist(metrics.elastic)), ratio.elastic.R2, min_max.elastic.R2, nd_rmse.elastic.R2),
+    RF = c(unname(unlist(metrics.rf)), ratio.rf.R2, min_max.rf.R2, nd_rmse.rf.R2),
+    Linear_reg = c(unname(unlist(metrics.linear)), ratio.linear.R2, min_max.linear.R2, nd_rmse.linear.R2),
+    XGB = c(unname(unlist(metrics.xgb)), ratio.xgb.R2, min_max.xgb.R2, nd_rmse.xgb.R2),
+    SVM = c(unname(unlist(metrics.svm)), ratio.svm.R2, min_max.svm.R2, nd_rmse.svm.R2)
+  )
+  
+  # Pivot all columns except for the "metric" column into a new column called "model"
+  # The values go into the values column
+  df_long <- df_summary %>%
+    pivot_longer(
+      cols = -Metric,
+      names_to = "model",
+      values_to = "value")
+
+  # Pivot each metric name from the metric column into its own column
+  df_wide <- df_long %>%
+    pivot_wider(
+      names_from = Metric,
+      values_from = value)
+  
+  df_final = df_wide %>%
+    arrange(desc(PR))
+  
+
+  return(df_final)
+}
+```
+
+### Final function (new algo set)
+
+```{r}
+library(mgcv)
+library(nnet)
+library(gbm)
+```
+
+
+
+**FUNCTION EXPLANATION**: `generate_summary_table`  
+
+**Args:**  
+1. **X** (matrix/data frame): predictor variables.  
+2. **y** (numeric vector): response variable.  
+3. **training_percentage** (numeric): proportion of data used for training (default: 0.75).  
+4. **signal_type** (character): passed to `true_signal(...)` to specify the signal type.  
+
+**Returns:**  
+- A data frame (7x10) summarizing model performance across 9 metrics (MSE, NSE, RSE, RRMSE, NRMSE, MAPE, PR, MinMax, NDRMSE) for 7 algorithms:  
+  - True signal (oracle)  
+  - Dummy/null model  
+  - **GAM**  
+  - Random forest  
+  - Linear regression  
+  - XGBoost  
+  - SVM  
+
+**Main logic:**  
+1. Split data into training and test sets.  
+2. Define a helper to compute the true signal for all rows in `X` -> Needed by the Oracle 
+3. Fit the following models on the training set:  
+   - True signal (oracle, no noise)  
+   - Null model (mean prediction)  
+   - Elastic net (alpha = 0.5)  
+   - Random forest  
+   - Linear regression  
+   - XGBoost  
+   - SVM (epsilon regression)  
+4. Generate predictions on the test set for each model.  
+5. Compute 6 base metrics via `get_all_6_metrics()` for each model.  
+6. Calculate additional metrics:  
+   - **PR** (performance ratio via `get_PR()`)  
+   - **MinMax** (via `get_min_max()`)  
+   - **NDRMSE** (via `get_NDRMSE()`)  
+7. Combine all results into a summary table.  
+8. Reshape data for easier comparison (`pivot_longer` to `pivot_wider`) and sort models by PR in descending order.  
+9. Return the final summary data frame.  
+
+
+```{r}
+generate_summary_table_new_algos = function(X, y, training_percentage = 0.75) {
+  # Generate train test split
+  train_percentage = training_percentage
+  train_size = floor(nrow(X) * train_percentage) 
+  
+  # Ensure identical train test split even if I re-run the generate summmary table function
+  # set.seed(3895157)
+  train <- sample(1:nrow(X), size = train_size)
+  test <- which(!(1:nrow(X) %in% train))
+  
+  X = as.matrix(X)
+  
+  ##################################################
+  
+  # Model fitting
+  ## Null model
+  null_model = y[train]
+  
+  ## Linear regression
+  df_lin = as.data.frame(X) # Create df for lm function
+  df_lin$y = y
+  
+  model_linear = lm(y ~ ., data = df_lin[train, ])
+  
+  ## GAM
+  ### Create X->Y formula dynamically
+  #print( names( as.data.frame(X) ) )
+  lin_data_X = subset(df_lin, select = -c(y))
+  k_dynamic = min(apply(lin_data_X[train, ] , 2, function(col) length(unique(col)) ) ) - 1
+  print(k_dynamic)
+  
+  predictor_names = paste("s(", names(lin_data_X), ", k=", k_dynamic,")", sep = "")
+  
+  #print(predictor_names)
+  gam_formula = reformulate(termlabels = predictor_names,
+                            response = "y")
+  
+  print(gam_formula)
+  
+  ### Fit GAM model
+  model_gam = gam(gam_formula, data = df_lin[train, ], select = T)
+
+  
+  ## Random forest
+  rf = randomForest(x = as.matrix(X[train, ]), y = y[train] )
+  
+
+  
+  ## XGboost
+  # Convert your data to a DMatrix (recommended for xgboost)
+  dtrain <- xgb.DMatrix(data = as.matrix(X[train, ]), label = y[train])
+
+  # Set parameters
+  params <- list(
+    objective = "reg:squarederror",  # for regression
+    lambda = 1,   # L2 regularization (ridge)
+    alpha = 1     # L1 regularization (lasso)
+  )
+  
+  # Fit the model with default parameters + regularization
+  model_xgb <- xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = 100,   # number of boosting rounds (iterations), can tune this
+    verbose = 1      # print progress
+  )
+  
+  ## SVM
+  model_svm <- svm(
+    x = X[train, ],    # training predictors
+    y = y[train],      # training response
+    type = "eps-regression" # regression type (default is epsilon-regression)
+  )
+  
+  
+  ##################################################
+  
+  # Model Evaluation
+  
+  ## Null model
+  # Make predictions
+  dummy_pred_r2 = rep(mean(y[train]), length(test))
+  # Evaluate predictions
+  metrics.null_R2 = get_all_6_metrics(test_Y = y[test], test_Y_Hat = dummy_pred_r2)
+  
+  ## Linear regression
+  # Make predictions
+  lin_data_X = subset(df_lin, select = -c(y))
+  lm_pred = stats::predict(model_linear, newdata = lin_data_X[test, ] )
+  # Evaluate predictions
+  metrics.linear = get_all_6_metrics(test_Y = y[test], test_Y_Hat = lm_pred)
+  
+  ## GAM
+  # Make predictions
+  gam_pred = stats::predict(model_gam, newdata = lin_data_X[test, ])
+  # Evaluate predictions
+  metrics.gam = get_all_6_metrics(test_Y = y[test], test_Y_Hat = gam_pred)
+  
+  
+  ## Random forest
+  # Make predictions
+  rf_pred = stats::predict(rf, newdata = as.matrix(X[test, ] ))
+  # Make predictions
+  rf_pred = stats::predict(rf, newdata = as.matrix(X[test, ] ))
+  # Evaluate predictions
+  metrics.rf = get_all_6_metrics(test_Y = y[test], test_Y_Hat = rf_pred)
+  
+
+  
+  ## XGboost
+  # Make predictions
+  xgboost_pred = predict(model_xgb, newdata = as.matrix(X[test, ]))
+  # Evaluate predictions
+  metrics.xgb = get_all_6_metrics(test_Y = y[test], test_Y_Hat = xgboost_pred)
+  
+  ## SVM
+  # Make predictions
+  svm_pred = predict(model_svm, newdata = X[test, ])
+  # Evaluate predictions
+  metrics.svm = get_all_6_metrics(test_Y = y[test], test_Y_Hat = svm_pred)
+  
+  ##################################################
+  
+  # Model Ratios
+
+  ## Null model -> Is used for PR so NA
+  
+  ## GAM
+  ratio.gam.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.gam$MSE)  
+  
+  ## Random forest
+  ratio.rf.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE) 
+  
+  ## Linear regression
+  ratio.linear.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE)  
+  
+  ## XGboost
+  ratio.xgb.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE)  
+  
+  ## SVM
+  ratio.svm.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE)
+  
+    ##################################################
+  
+  # Model Min-Max
+
+  ## Null model -> Is used for PR so NA
+  
+  ## GAM
+  min_max.gam.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.gam$MSE)  
+  
+  ## Random forest
+  min_max.rf.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE) 
+  
+  ## Linear regression
+  min_max.linear.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE)  
+  
+  ## XGboost
+  min_max.xgb.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE)  
+  
+  ## SVM
+  min_max.svm.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE)  
+  
+  ##################################################
+  
+  # ND-RMSE
+  ## Null model -> Is used for PR so NA
+  
+  ## GAM
+  nd_rmse.gam.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.gam$MSE,
+                              test_Y = y[test])  
+  
+  ## Random forest
+  nd_rmse.rf.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE,
+                             test_Y = y[test]) 
+  
+  ## Linear regression
+  nd_rmse.linear.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE,
+                              test_Y = y[test])  
+  
+  ## XGboost
+  nd_rmse.xgb.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE,
+                              test_Y = y[test])  
+  
+  ## SVM
+  nd_rmse.svm.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE,
+                              test_Y = y[test])  
+
+  
+  ##################################################
+  
+  # Summary
+  df_summary = data.frame(
+    Metric = c(names(metrics.null_R2), "PR", "MinMax", "NDRMSE"),
+    Dummy_R2 = c(unname(unlist(metrics.null_R2)), NA, NA, NA),
+    GAM = c(unname(unlist(metrics.gam)), ratio.gam.R2, min_max.gam.R2, nd_rmse.gam.R2),
+    RF = c(unname(unlist(metrics.rf)), ratio.rf.R2, min_max.rf.R2, nd_rmse.rf.R2),
+    Linear_reg = c(unname(unlist(metrics.linear)), ratio.linear.R2, min_max.linear.R2, nd_rmse.linear.R2),
+    XGB = c(unname(unlist(metrics.xgb)), ratio.xgb.R2, min_max.xgb.R2, nd_rmse.xgb.R2),
+    SVM = c(unname(unlist(metrics.svm)), ratio.svm.R2, min_max.svm.R2, nd_rmse.svm.R2)
+  )
+  
+  # Pivot all columns except for the "metric" column into a new column called "model"
+  # The values go into the values column
+  df_long <- df_summary %>%
+    pivot_longer(
+      cols = -Metric,
+      names_to = "model",
+      values_to = "value")
+
+  # Pivot each metric name from the metric column into its own column
+  df_wide <- df_long %>%
+    pivot_wider(
+      names_from = Metric,
+      values_from = value)
+  
+  df_final = df_wide %>%
+    arrange(desc(PR))
+  
+
+  return(df_final)
+}
+```
+
+
+
+## Rank correlation
+
+```{r}
+get_rank_cor = function(df_Dutch, df_German, exclude_model = c("True_signal", "Dummy_R2"),
+                        metrics_list = c("NSE", "RSE", "RRMSE", "NRMSE", "MAPE", "PR", "MSE", "MinMax", "NDRMSE"),
+                        higher_is_better_list = c(NSE = TRUE, RSE = FALSE, RRMSE = FALSE, NRMSE = FALSE, 
+                                                       MAPE = FALSE, PR = TRUE, MSE = FALSE, MinMax = TRUE, NDRMSE = TRUE)) {
+  # Step 1: True ranking -> Based on dutch$MSE
+  df_Dutch_5_models = df_Dutch %>% filter(! model %in% exclude_model)
+  
+  true_ranking_names = df_Dutch_5_models[order(df_Dutch_5_models$MSE), ] %>% pull(model)
+  true_ranking_idx = 1:length(true_ranking_names)
+  
+  print("True ranking list")
+  print(true_ranking_names)
+  
+  # Step 2: Proposed ranking
+  df_German_5_models = df_German %>% filter(! model %in% exclude_model)
+  
+  # Initialize results vector
+  results = vector("numeric", length = length(metrics_list))
+  names(results) = metrics_list
+  
+  # Compute rank correlation for each metric
+  for (metric in metrics_list) {
+    proposed_ranking_names = df_German_5_models[order(df_German_5_models[[metric]], decreasing = higher_is_better_list[metric]), ] %>% 
+      pull(model)
+    
+    proposed_ranking_idx = match(true_ranking_names, proposed_ranking_names)
+    
+    print(paste("Proposed ranking for -> ", metric))
+    print(proposed_ranking_names)
+    print(proposed_ranking_idx)
+    
+    # Compute rank correlation
+    results[metric] = cor(true_ranking_idx, proposed_ranking_idx, method = "kendall")
+  }
+  
+  return(results)
+  
+  # Compute for MSE for now -> Loop post sanity check
+  # proposed_ranking_names = df_German_5_models[order(df_German_5_models$MSE), ] %>% pull(model)
+  # proposed_ranking_idx = match(true_ranking_names, proposed_ranking_names)
+  # 
+  # 
+  # 
+  # rank_cor = cor(true_ranking_idx, proposed_ranking_idx, method = "kendall")
+  # print(rank_cor)
+}
+```
+
+Function to extract top NSE and LM value
+
+```{r}
+get_NSE_and_LM = function(df) {
+  # nse = df[order( df[["NSE"]])] %>% select(model) %>% top_n(1) %>% pull()
+  nse = max(df[["NSE"]])
+  
+  lm = df %>% filter(model == "Linear_reg") %>% pull(NRMSE)
+
+  output = list(nse = nse, lm = lm)
+  return(output)
+}
+```
+
+
+# 4. Main code
+
+Use the thresholds (noise-0.2, signal=0.15) we identified in the calibration section.
+
+# Ref A
+
+Use landmarking dataset A (original) to compute the algorithm performance summary table.
+
+## Summaries
+
+```{r}
+# 1
+A_summary_boston = generate_summary_table(X = boston_df$X, y = boston_df$y)
+A_summary_boston
+
+# 2
+A_summary_ames = generate_summary_table(X = ames_df$X, y = ames_df$y)
+A_summary_ames
+
+# 3
+A_summary_cali = generate_summary_table(X = california_df$X, y = california_df$y)
+A_summary_cali
+
+# 4
+A_summary_insurance = generate_summary_table(X = insurance_df$X, y = insurance_df$y)
+A_summary_insurance
+
+# 5
+A_summary_employed = generate_summary_table(X = employed_df$X, y = employed_df$y)
+A_summary_employed
+```
+
+
+## NSE & Signal
+
+```{r}
+# 1
+A_nse_lm_boston = get_NSE_and_LM(A_summary_boston)
+A_nse_lm_boston
+
+# 2
+A_nse_lm_ames = get_NSE_and_LM(A_summary_ames)
+A_nse_lm_ames
+
+# 3
+A_nse_lm_cali = get_NSE_and_LM(A_summary_cali)
+A_nse_lm_cali
+
+# 4
+A_nse_lm_insurance = get_NSE_and_LM(A_summary_insurance)
+A_nse_lm_insurance
+
+# 5
+A_nse_lm_employed = get_NSE_and_LM(A_summary_employed)
+A_nse_lm_employed
+```
+
+
+## Correlation
+
+Since Boston is the reference, there will be 4 values.
+
+These will serve as the "ground truth" values.
+
+```{r}
+# 1
+A_tau_boston_ames = get_rank_cor(A_summary_boston, A_summary_ames, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+A_tau_boston_ames
+
+# 2
+A_tau_boston_cali = get_rank_cor(A_summary_boston, A_summary_cali, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+A_tau_boston_cali
+
+# 3
+A_tau_boston_insurance = get_rank_cor(A_summary_boston, A_summary_insurance, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+A_tau_boston_insurance
+
+#4
+A_tau_boston_employed = get_rank_cor(A_summary_boston, A_summary_employed, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+A_tau_boston_employed
+```
+
+
+# Ref B
+
+Use landmarking dataset B (new) to compute the algorithm performance summary table.
+
+## Summaries
+
+```{r}
+# 1
+B_summary_boston = generate_summary_table_new_algos(X = boston_df$X, y = boston_df$y)
+B_summary_boston
+
+# 2
+B_summary_ames = generate_summary_table_new_algos(X = ames_df$X, y = ames_df$y)
+B_summary_ames
+
+# 3
+B_summary_cali = generate_summary_table_new_algos(X = california_df$X, y = california_df$y)
+B_summary_cali
+
+# 4
+B_summary_insurance = generate_summary_table_new_algos(X = insurance_df$X, y = insurance_df$y)
+B_summary_insurance
+
+# 5
+B_summary_employed = generate_summary_table_new_algos(X = employed_df$X, y = employed_df$y)
+B_summary_employed
+```
+
+
+## NSE & Signal
+
+```{r}
+# 1
+B_nse_lm_boston = get_NSE_and_LM(B_summary_boston)
+B_nse_lm_boston
+
+# 2
+B_nse_lm_ames = get_NSE_and_LM(B_summary_ames)
+B_nse_lm_ames
+
+# 3
+B_nse_lm_cali = get_NSE_and_LM(B_summary_cali)
+B_nse_lm_cali
+
+# 4
+B_nse_lm_insurance = get_NSE_and_LM(B_summary_insurance)
+B_nse_lm_insurance
+
+# 5
+B_nse_lm_employed = get_NSE_and_LM(B_summary_employed)
+B_nse_lm_employed
+```
+
+
+## Correlation
+
+Since Boston is the reference, there will be 4 values.
+
+These will serve as the "ground truth" values.
+
+```{r}
+# 1
+B_tau_boston_ames = get_rank_cor(B_summary_boston, B_summary_ames, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+B_tau_boston_ames
+
+# 2
+B_tau_boston_cali = get_rank_cor(B_summary_boston, B_summary_cali, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+B_tau_boston_cali
+
+# 3
+B_tau_boston_insurance = get_rank_cor(B_summary_boston, B_summary_insurance, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+B_tau_boston_insurance
+
+#4
+B_tau_boston_employed = get_rank_cor(B_summary_boston, B_summary_employed, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+B_tau_boston_employed
+```
+
+
+
+# 5. Thesis summary table
+
+
+
+This final section replicates the validation tables from the thesis (Table 11 and 12).
+
+It applies the framework's decision rule (thresholds Δn=0.2, Δs=0.15) to the landmarking results and compares the predictions against the ground-truth rank correlations.
+
+
+
+```{r}
+apply_framework = function(noise_threshold = 0.2, signal_threshold = 0.15, ref_noise, ref_signal, input_noise, input_signal) {
+  diff_noise = round(abs(ref_noise - input_noise), 2)
+  diff_signal = round(abs(ref_signal - input_signal), 2)
+
+  
+  if (diff_noise <= noise_threshold) {
+    if(diff_signal <= signal_threshold) {
+      return("Similar")
+    }
+    else {
+      return ("NOT similar")
+    }
+
+  }
+  return("NOT similar")
+} 
+
+
+apply_framework_to_table = function(table_data, reference_dataset = "Boston") {
+  # Get reference values from the specified dataset
+  ref_row = table_data[table_data$dataset == reference_dataset, ]
+  ref_noise = ref_row$noise
+  ref_signal = ref_row$signal
+  
+  # Apply framework to all non-reference datasets
+  for(i in 1:nrow(table_data)) {
+    if(table_data$dataset[i] != reference_dataset) {
+      table_data$prediction[i] <- apply_framework(
+        ref_noise = ref_noise,
+        ref_signal = ref_signal,
+        input_noise = table_data$noise[i],
+        input_signal = table_data$signal[i]
+      )
+    }
+  }
+  
+  return(table_data)
+}
+
+```
+
+## A for reference
+
+For the reference dataset (Boston) use landmarking set A (original). The problem space complexity of all non-reference datasets was estimated using landmarking set B (new). Then, compare against the ground truth.
+
+```{r}
+thesis_table_A = data.frame(dataset = c("Boston", "Ames", "California", "Insurance", "Longely"),
+                            landmarking = c("A", rep("B", 4)),
+                            noise = 1 - c(A_nse_lm_boston$nse, B_nse_lm_ames$nse, B_nse_lm_cali$nse, B_nse_lm_insurance$nse, B_nse_lm_employed$nse),
+                            signal = c(A_nse_lm_boston$lm, B_nse_lm_ames$lm, B_nse_lm_cali$lm, B_nse_lm_insurance$lm, B_nse_lm_employed$lm),
+                            prediction = rep(NA, 5),
+                            true_corr = c(NA, A_tau_boston_ames, A_tau_boston_cali, A_tau_boston_insurance, A_tau_boston_employed)
+                            )
+# Ground truth
+thesis_table_A$ground_truth = ifelse(round(thesis_table_A$true_corr, 10) >= 0.4, "Similar", "NOT similar")
+
+# Apply framework
+thesis_table_A = apply_framework_to_table(thesis_table_A)
+
+# Outcome validation
+thesis_table_A$outcome = ifelse(thesis_table_A$prediction == thesis_table_A$ground_truth, "Correct", "Wrong")
+
+
+thesis_table_A
+```
+
+
+## B for reference
+
+For the reference dataset (Boston) use landmarking set B (new). The problem space complexity of all non-reference datasets was estimated using landmarking set A (original). Then, compare against the ground truth.
+
+```{r}
+thesis_table_B = data.frame(dataset = c("Boston", "Ames", "California", "Insurance", "Longely"),
+                            landmarking = c("B", rep("A", 4)),
+                            noise = 1 - c(B_nse_lm_boston$nse, A_nse_lm_ames$nse, A_nse_lm_cali$nse, A_nse_lm_insurance$nse, A_nse_lm_employed$nse),
+                            signal = c(B_nse_lm_boston$lm, A_nse_lm_ames$lm, A_nse_lm_cali$lm, A_nse_lm_insurance$lm, A_nse_lm_employed$lm),
+                            prediction = rep(NA, 5),
+                            true_corr = c(NA, B_tau_boston_ames, B_tau_boston_cali, B_tau_boston_insurance, B_tau_boston_employed)
+                            )
+
+
+# Ground truth
+thesis_table_B$ground_truth = ifelse(round(thesis_table_B$true_corr, 10) >= 0.4, "Similar", "NOT similar")
+
+# Apply framework
+thesis_table_B = apply_framework_to_table(thesis_table_B)
+
+# Outcome validation
+thesis_table_B$outcome = ifelse(thesis_table_B$prediction == thesis_table_B$ground_truth, "Correct", "Wrong")
+
+
+thesis_table_B
+```
+
+
+Quantify the similarity of the noise and signal estimates between the landmarking sets.
+
+```{r}
+((thesis_table_A$noise / thesis_table_B$noise) - 1 ) * 100
+```
+
+```{r}
+((thesis_table_A$signal / thesis_table_B$signal) - 1 ) * 100
+```
+
+

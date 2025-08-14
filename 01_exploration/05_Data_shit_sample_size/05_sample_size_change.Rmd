@@ -1,0 +1,1208 @@
+---
+title: "Sample size changes"
+author: "Valentin Kodderitzsch"
+date: "2025-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Global set up
+
+The goal of this experiment is to investigate the impact of **sample size changes** in the German dataset on **rank instability**, using the Dutch dataset as the fixed reference.  
+
+The reference sample size is `4 * 10^3` (Dutch data), and German sample sizes vary across a predefined list: `10, 20, 40, 100, 500, 800, 1000`.  
+
+The experiment follows a **nested Monte Carlo design**:  
+- **Outer loop** (`B_global = 50`): Repeat the full experiment 50 times to account for **sampling variance**.  
+- **Inner loop** (`n_sample_size_list_global = 7`): Within each repetition, vary the German dataset’s sample size while keeping all other parameters fixed.  
+
+```{r}
+set.seed(3895157)
+
+noise_global_NL = 0.1 # noise proportion
+noise_global_DE = 0.1 # noise proportion DE
+
+# Global sample size list
+sample_size_list_global = c("10", "20", "40", "100", "500", "800", "1000") 
+n_sample_size_list_global = length(sample_size_list_global)
+
+# Local sample size
+sample_size_global_NL = 4 * 10^3
+sample_size_global_DE = 4 * 10
+
+B_global = 50 # Samples per subject-treatment level -> B=10 takes about 1 min
+```
+
+# #################
+
+# 2. Helper Functions
+
+## Generate Data
+
+True signal
+
+```{r}
+true_signal = function(x1, x2, x3, x4) {
+  # Case 2
+  x1 + x2 + x3 +  0.15*x4^2
+  # Case 3
+  # x1 + x2 + x3 +  exp(0.3*x4) * (1 + 0.9 * sin((2*pi/3) * x4))
+}
+
+true_signal(1, 2, 3, 4)
+```
+
+
+Noise proportion
+
+```{r}
+# Helper function to compute error variance
+get_error_for_signal_prop = function(signal_prop, signal_sd) {
+  ((1-signal_prop) / signal_prop ) * signal_sd
+}
+
+# True signal variance
+f3_signal_var = 0.1002295
+```
+
+**FUNCTION EXPLANATION**: `generate_data`  
+
+**Args:**  
+1. **noise** (numeric): proportion of variance due to irreducible error.  
+2. **n** (integer): number of observations.  
+3. **use_original_signal_var** (logical): if `TRUE` use `f3_signal_var`, otherwise estimate by simulation.  
+**Returns:**  
+- **X**: numeric matrix (n × 4) of predictors  
+- **y**: numeric response vector (length n)  
+- **signal_var**: numeric; estimated or provided signal variance  
+- **irreducible_error**: numeric; standard deviation of the additive Gaussian noise  
+
+**Main logic:**  
+1. Draw 4 predictors from their uniform ranges (`x1..x4`).  
+2. If `use_original_signal_var = FALSE`:  
+   - Simulate `B = 10^3` noiseless responses (`true_signal(...)`) to estimate signal variance.  
+   - Otherwise, set `signal_var = f3_signal_var`.  
+3. Compute error variance for the requested noise proportion, take square root to obtain **irreducible error** -> raw irreducible error based on `irreducible_error` input
+4. Form `y = true_signal(...) + Normal(0, sd)`
+
+```{r}
+generate_data = function(noise = noise_global, 
+                         n,
+                         use_original_signal_var = T) {
+  # Explanatory variables
+  x1 = runif(n, min = 0, max = 20) 
+  x2 = runif(n, min = 4 * pi, max = 5.6 * pi) 
+  x3 = runif(n, min = 0, max = 1)
+  x4 = runif(n, min = 1, max = 11)
+  
+  X = data.frame(x1 = x1, x2 = x2, x3 = x3, x4 = x4)
+  X = as.matrix(X)
+  
+  if (!use_original_signal_var) {
+    # Compute true signal variance
+    B = 10^3
+    signal_list = numeric(B)
+
+    for (idx in 1:B) {
+      y_boot = true_signal(x1, x2, x3, x4)
+      signal_list[idx] = var(y_boot)
+    }
+    
+    signal_var = mean(signal_list)
+    #print(paste("Calculatied signal var instead of using the original -> ", signal_var))
+  } else {
+      signal_var = f3_signal_var
+      #print(paste("Used original signal var -> ", signal_var))
+    }
+  
+  # Compute error variance
+  error_var = get_error_for_signal_prop((1-noise), signal_var ) # f3_signal_var
+  #print(paste("error var -> ", error_var))
+
+  # Save irreducible error as standard deviation
+  irreducible_error = sqrt(error_var)
+
+  # Response
+  y = true_signal(x1, x2, x3, x4) + rnorm(n, mean = 0, sd = irreducible_error)
+  
+  # Return list
+  list(X = X, y = y, signal_var = signal_var, irreducible_error = irreducible_error)
+}
+
+# Sanity check
+df_Dutch = generate_data(use_original_signal_var = F, noise = noise_global_NL,
+                         n = sample_size_global_NL)
+df_German = generate_data(use_original_signal_var = F, noise = noise_global_DE,
+                          n = sample_size_global_DE)
+```
+
+
+```{r}
+nrow(df_Dutch$X)
+nrow(df_German$X)
+```
+
+
+
+
+## Plot X4
+
+Sanity check curvature and plot it
+
+```{r}
+get_lm_nrmse = function(input_df) {
+  # Reformat input dataframe
+  tmp_df = as.data.frame(input_df$X)
+  tmp_df$y = input_df$y
+  
+  # Fit a linear regression model
+  lm_fit = lm(y ~ ., data = tmp_df)
+  y_hat = predict(lm_fit)
+  
+  # Compute RMSE
+  mse = mean( (tmp_df$y - y_hat)^2 )
+  round(sqrt(mse) / sd(tmp_df$y) , 4) # diff(range(tmp_df$y))
+}
+
+# X4 component
+get_y_for_x4 = function(x4) {
+  expr = body(true_signal)[[2]][[3]]
+  # print(expr)
+  eval(expr, envir = list(x4 = x4))
+}
+
+# Set up side-by-side plotting
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+
+# Function to create plot for each dataset
+plot_dataset = function(df, country, color) {
+  # Get x4 range and create evaluation points
+  x4_range = range(df$X[, 4])
+  x4_vals = seq(x4_range[1], x4_range[2], length.out = 1000)
+  
+  # Compute y values and get overall range
+  y_pred = sapply(x4_vals, get_y_for_x4)
+  y_range = range(c(df$y, y_pred))
+  
+  # Compute linear NRMSE
+  lm_nrmse = get_lm_nrmse(df)
+  
+  # Create plot
+  plot(df$X[, 4], df$y,
+       xlab = "x4", ylab = "y",
+       main = paste(country, " (", lm_nrmse  ," LM) n=", nrow(df$X), sep = ""),
+       pch = 16, col = color,
+       ylim = y_range)
+  
+  # Add fitted line
+  lines(x4_vals, y_pred, col = "green", lwd = 2)
+}
+
+# Create plots
+plot_dataset(df_Dutch, "Dutch", "blue")
+plot_dataset(df_German, "German", "red")
+
+# Reset plotting parameters
+par(mfrow = c(1, 1))
+
+
+# Set up side-by-side plotting
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+
+# New code:
+for (idx in seq_along(sample_size_list_global)) {
+  local_n = sample_size_list_global[idx]
+  local_n = as.numeric(local_n) * 4
+  
+  # Generate data
+  df_tmp = generate_data(use_original_signal_var = F, 
+                         noise = noise_global_NL, n = local_n)
+  plot_dataset(df_tmp, "", "blue")
+}
+
+# Reset plotting parameters
+par(mfrow = c(1, 1))
+```
+
+
+```{r}
+# More sanity checks
+check_noise_prop = function(df) {
+  (df$irreducible_error)^2 / (df$signal_var + (df$irreducible_error)^2 ) 
+}
+
+check_noise_prop(df_Dutch)
+check_noise_prop(df_German)
+
+var(df_Dutch$y)
+var(df_German$y)
+```
+
+
+```{r}
+# Plot to check if the distributions are visibly different
+plot(density(df_Dutch$y), main = "Dutch")
+plot(density(df_German$y), main = "German")
+
+boxplot(df_Dutch$y, main = "Dutch")
+boxplot(df_German$y, main = "German")
+
+
+# Compute densities
+d1 = density(df_Dutch$y)
+d2 = density(df_German$y)
+
+# Set axis limits based on both
+x_range = range(d1$x, d2$x)
+y_max = max(d1$y, d2$y)
+
+# Plot with fixed xlim and ylim
+plot(d1, main = "Density of y: Dutch vs German", col = "blue", lwd = 2,
+     xlim = x_range, ylim = c(0, y_max))
+
+# Overlay the second density
+lines(d2, col = "red", lwd = 2)
+
+# Add legend
+legend("topright", legend = c("Dutch", "German"), col = c("blue", "red"), lwd = 2)
+
+
+```
+
+```{r}
+plot(df_German$X[, 1], df_German$y)
+plot(df_Dutch$X[, 1], df_Dutch$y)
+
+
+plot(df_German$X[, 2], df_German$y)
+plot(df_Dutch$X[, 2], df_Dutch$y)
+
+plot(df_German$X[, 3], df_German$y)
+plot(df_Dutch$X[, 3], df_Dutch$y)
+
+plot(df_German$X[, 4], df_German$y)
+plot(df_Dutch$X[, 4], df_Dutch$y)
+
+
+```
+
+
+
+
+## Train-Test Algorithms
+
+### Metrics
+
+I evaluated 9 normalized metrics. 6 are well known: MSE, NSE, RSE, RRMSE, NRMSE and MAPE. 3 I developed myself to include a null model: PR, Min-Max and NDRMSE.
+
+```{r}
+get_MSE = function(test_Y, test_Y_Hat) {
+  mean( (test_Y - test_Y_Hat)^2 )
+}
+
+get_NSE = function(test_Y, test_Y_Hat) {
+  numerator = sum((test_Y - test_Y_Hat)^2)
+  denominator = sum((test_Y - mean(test_Y))^2)
+  1 - (numerator / denominator)
+}
+
+get_RSE = function(test_Y, test_Y_Hat) {
+  numerator = sum((test_Y - test_Y_Hat)^2)
+  denominator = sum((test_Y - mean(test_Y))^2)
+  numerator / denominator
+}
+
+get_RRMSE = function(test_Y, test_Y_Hat) {
+  rmse = sqrt(mean((test_Y - test_Y_Hat)^2))
+  rmse / mean(test_Y)
+}
+
+get_NRMSE = function(test_Y, test_Y_Hat) {
+  rmse = sqrt(mean((test_Y - test_Y_Hat)^2))
+  rmse / ( sd(test_Y) ) #max(test_Y) - min(test_Y)
+}
+
+get_MAPE = function(test_Y, test_Y_Hat) {
+  if (any(test_Y == 0)) {
+    warning("My warning from get_MAP: test_Y contains zeros")
+  } else {
+    mean(abs( (test_Y - test_Y_Hat)/test_Y )) * 100
+  }
+}
+
+get_all_6_metrics = function(test_Y, test_Y_Hat) {
+  list(
+    MSE   = get_MSE(test_Y, test_Y_Hat),
+    NSE   = get_NSE(test_Y, test_Y_Hat),
+    RSE   = get_RSE(test_Y, test_Y_Hat),
+    RRMSE = get_RRMSE(test_Y, test_Y_Hat),
+    NRMSE = get_NRMSE(test_Y, test_Y_Hat),
+    MAPE  = get_MAPE(test_Y, test_Y_Hat)
+  )
+}
+```
+
+Performance ratio.
+
+```{r}
+get_PR = function(MSE_null, MSE_model) {
+  sqrt(MSE_null / MSE_model)
+}
+```
+
+
+Min-max metric
+
+```{r}
+get_min_max = function(MSE_null, MSE_model) {
+  # (MSE_null - MSE_model) / MSE_null
+  1 - (MSE_model / MSE_null)
+}
+```
+
+ND-RMSE
+
+```{r}
+get_NDRMSE = function(MSE_null, MSE_model, test_Y) {
+  numerator =  sqrt(MSE_null) - sqrt(MSE_model) 
+  denominator = max(test_Y) - min(test_Y)
+  numerator / denominator
+  
+  # sqrt(MSE_null) / sqrt(MSE_model)
+}
+```
+
+
+
+### Final train-test function
+
+```{r}
+# Load all libraries
+library(glmnet)
+library(randomForest)
+library(xgboost)
+library("e1071")
+library(tidyr)
+library(dplyr)
+```
+
+**FUNCTION EXPLANATION**: `generate_summary_table`  
+
+**Args:**  
+1. **X** (matrix/data frame): predictor variables.  
+2. **y** (numeric vector): response variable.  
+3. **training_percentage** (numeric): proportion of data used for training (default: 0.75).  
+4. **signal_type** (character): passed to `true_signal(...)` to specify the signal type.  
+
+**Returns:**  
+- A data frame (7x10) summarizing model performance across 9 metrics (MSE, NSE, RSE, RRMSE, NRMSE, MAPE, PR, MinMax, NDRMSE) for 7 algorithms:  
+  - True signal (oracle)  
+  - Dummy/null model  
+  - Elastic net  
+  - Random forest  
+  - Linear regression  
+  - XGBoost  
+  - SVM  
+
+**Main logic:**  
+1. Split data into training and test sets.  
+2. Define a helper to compute the true signal for all rows in `X` -> Needed by the Oracle 
+3. Fit the following models on the training set:  
+   - True signal (oracle, no noise)  
+   - Null model (mean prediction)  
+   - Elastic net (alpha = 0.5)  
+   - Random forest  
+   - Linear regression  
+   - XGBoost  
+   - SVM (epsilon regression)  
+4. Generate predictions on the test set for each model.  
+5. Compute 6 base metrics via `get_all_6_metrics()` for each model.  
+6. Calculate additional metrics:  
+   - **PR** (performance ratio via `get_PR()`)  
+   - **MinMax** (via `get_min_max()`)  
+   - **NDRMSE** (via `get_NDRMSE()`)  
+7. Combine all results into a summary table.  
+8. Reshape data for easier comparison (`pivot_longer` to `pivot_wider`) and sort models by PR in descending order.  
+9. Return the final summary data frame.  
+
+```{r}
+generate_summary_table = function(X, y, training_percentage = 0.75) {
+  # Generate train test split
+  train_percentage = training_percentage
+  train_size = floor(nrow(X) * train_percentage) 
+
+  train = sample(1:nrow(X), size = train_size)
+  test = which(!(1:nrow(X) %in% train))
+  
+  ##################################################
+  
+  # Model fitting
+  
+  ## True signal
+  true_signal_all = function(X) {
+    y = numeric(nrow(X))
+    for (idx in 1:nrow(X)) {
+      tmp_row = X[idx, ]
+      y[idx] = true_signal(x1 = tmp_row[1], x2 = tmp_row[2], x3 = tmp_row[3], x4 = tmp_row[4])
+    }
+    return(y)
+  }
+  
+  ## Null model
+  null_model = y[train]
+  
+  ## Elatic net
+  # Set alpha = 0.5 for balanced elastic net
+  cv_elastic = cv.glmnet(
+    x = X[train, ],
+    y = y[train],
+    alpha = 0.5,
+    family = "gaussian",
+    nfolds = 5
+  )
+  
+  
+  # Fit on entire dataset using optimal lambda value
+  model_elastic = glmnet(x = X[train, ],
+                         y = y[train],
+                         lambda = cv_elastic$lambda.1se)
+  
+  ## Random forest
+  rf = randomForest(x = as.matrix(X[train, ]), y = y[train] )
+  
+  ## Linear regression
+  df_lin = as.data.frame(X) # Create df for lm function
+  df_lin$y = y
+  
+  model_linear = lm(y ~ ., data = df_lin[train, ])
+  
+  ## XGboost
+  # Convert your data to a DMatrix (recommended for xgboost)
+  dtrain = xgb.DMatrix(data = as.matrix(X[train, ]), label = y[train])
+
+  # Set parameters
+  params = list(
+    objective = "reg:squarederror",  # for regression
+    lambda = 1,   # L2 regularization (ridge)
+    alpha = 1     # L1 regularization (lasso)
+  )
+  
+  # Fit the model with default parameters + regularization
+  model_xgb = xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = 100,   # number of boosting rounds (iterations), can tune this
+    verbose = 1      # print progress
+  )
+  
+  ## SVM
+  model_svm = svm(
+    x = X[train, ],    # training predictors
+    y = y[train],      # training response
+    type = "eps-regression" # regression type (default is epsilon-regression)
+  )
+  
+  
+  ##################################################
+  
+  # Model Evaluation
+  
+  ## True signal
+  # Make prediction
+  true_signal_pred = true_signal_all(X[test, ])
+  # Evaluate
+  metrics.true_signal = get_all_6_metrics(test_Y = y[test], test_Y_Hat = true_signal_pred)
+  
+  ## Null model
+  # Make predictions
+  dummy_pred_r2 = rep(mean(y[train]), length(test))
+  # Evaluate predictions
+  metrics.null_R2 = get_all_6_metrics(test_Y = y[test], test_Y_Hat = dummy_pred_r2)
+  
+  ## Elatic net
+  # Make predictions
+  elastic_pred = stats::predict(model_elastic, newx = X[test, ])
+  # Evaluate predictions
+  metrics.elastic = get_all_6_metrics(test_Y = y[test], test_Y_Hat = elastic_pred)
+  
+  ## Random forest
+  # Make predictions
+  rf_pred = stats::predict(rf, newdata = as.matrix(X[test, ] ))
+  # Make predictions
+  rf_pred = stats::predict(rf, newdata = as.matrix(X[test, ] ))
+  # Evaluate predictions
+  metrics.rf = get_all_6_metrics(test_Y = y[test], test_Y_Hat = rf_pred)
+  
+  ## Linear regression
+  # Make predictions
+  lin_data_X = subset(df_lin, select = -c(y))
+  lm_pred = stats::predict(model_linear, newdata = lin_data_X[test, ] )
+  # Evaluate predictions
+  metrics.linear = get_all_6_metrics(test_Y = y[test], test_Y_Hat = lm_pred)
+  
+  ## XGboost
+  # Make predictions
+  xgboost_pred = predict(model_xgb, newdata = as.matrix(X[test, ]))
+  # Evaluate predictions
+  metrics.xgb = get_all_6_metrics(test_Y = y[test], test_Y_Hat = xgboost_pred)
+  
+  ## SVM
+  # Make predictions
+  svm_pred = predict(model_svm, newdata = X[test, ])
+  # Evaluate predictions
+  metrics.svm = get_all_6_metrics(test_Y = y[test], test_Y_Hat = svm_pred)
+  
+  ##################################################
+  
+  # Model Ratios
+  
+  ## True signal
+  ratio.true_signal.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.true_signal$MSE)  
+  
+  ## Null model -> Is used for PR so NA
+  
+  ## Elatic net
+  ratio.elastic.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.elastic$MSE)  
+  
+  ## Random forest
+  ratio.rf.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE) 
+  
+  ## Linear regression
+  ratio.linear.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE)  
+  
+  ## XGboost
+  ratio.xgb.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE)  
+  
+  ## SVM
+  ratio.svm.R2 = get_PR(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE)
+  
+    ##################################################
+  
+  # Model Min-Max
+  
+  ## True signal
+  min_max.true_signal.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.true_signal$MSE)  
+  
+  ## Null model -> Is used for PR so NA
+  
+  ## Elatic net
+  min_max.elastic.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.elastic$MSE)  
+  
+  ## Random forest
+  min_max.rf.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE) 
+  
+  ## Linear regression
+  min_max.linear.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE)  
+  
+  ## XGboost
+  min_max.xgb.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE)  
+  
+  ## SVM
+  min_max.svm.R2 = get_min_max(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE)  
+  
+  ##################################################
+  
+  # ND-RMSE
+
+  ## True signal
+  nd_rmse.true_signal.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.true_signal$MSE,
+                              test_Y = y[test])  
+  
+  ## Null model -> Is used for PR so NA
+  
+  ## Elatic net
+  nd_rmse.elastic.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.elastic$MSE,
+                              test_Y = y[test])  
+  
+  ## Random forest
+  nd_rmse.rf.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.rf$MSE,
+                             test_Y = y[test]) 
+  
+  ## Linear regression
+  nd_rmse.linear.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.linear$MSE,
+                              test_Y = y[test])  
+  
+  ## XGboost
+  nd_rmse.xgb.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.xgb$MSE,
+                              test_Y = y[test])  
+  
+  ## SVM
+  nd_rmse.svm.R2 = get_NDRMSE(MSE_null = metrics.null_R2$MSE,
+                              MSE_model = metrics.svm$MSE,
+                              test_Y = y[test])  
+
+  
+  ##################################################
+  
+  # Summary
+  df_summary = data.frame(
+    Metric = c(names(metrics.true_signal), "PR", "MinMax", "NDRMSE"),
+    True_signal = c(unname(unlist(metrics.true_signal)), ratio.true_signal.R2, min_max.true_signal.R2, nd_rmse.true_signal.R2),
+    Dummy_R2 = c(unname(unlist(metrics.null_R2)), NA, NA, NA),
+    elastic_net = c(unname(unlist(metrics.elastic)), ratio.elastic.R2, min_max.elastic.R2, nd_rmse.elastic.R2),
+    RF = c(unname(unlist(metrics.rf)), ratio.rf.R2, min_max.rf.R2, nd_rmse.rf.R2),
+    Linear_reg = c(unname(unlist(metrics.linear)), ratio.linear.R2, min_max.linear.R2, nd_rmse.linear.R2),
+    XGB = c(unname(unlist(metrics.xgb)), ratio.xgb.R2, min_max.xgb.R2, nd_rmse.xgb.R2),
+    SVM = c(unname(unlist(metrics.svm)), ratio.svm.R2, min_max.svm.R2, nd_rmse.svm.R2)
+  )
+  
+  # Pivot all columns except for the "metric" column into a new column called "model"
+  # The values go into the values column
+  df_long = df_summary %>%
+    pivot_longer(
+      cols = -Metric,
+      names_to = "model",
+      values_to = "value")
+
+  # Pivot each metric name from the metric column into its own column
+  df_wide = df_long %>%
+    pivot_wider(
+      names_from = Metric,
+      values_from = value)
+  
+  df_final = df_wide %>%
+    arrange(desc(PR))
+  
+  ##################################################
+  
+  # # Memory clean up
+  # objects_to_keep = "df_final"
+  # all_objects = ls() # List all environments inside this function
+  # to_remove = setdiff(all_objects, objects_to_keep)
+  # #print(to_remove)
+  # rm(list = to_remove) # Remove
+  # 
+  # # Force garbage collection
+  # gc(verbose = F)
+  # invisible(gc(full = TRUE, verbose = F))
+  
+  # Final function output
+  return(df_final)
+}
+
+
+# Sanity check
+df_Dutch_summary = generate_summary_table(X = df_Dutch$X, y = df_Dutch$y)
+df_Dutch_summary
+
+df_German_summary = generate_summary_table(X = df_German$X, y = df_German$y)
+df_German_summary
+```
+
+linear, e net, svm, xgb, rf <= N low
+xgb, rf, svm, linear, elastic <= N High
+
+## Rank Correlation
+
+**FUNCTION EXPLANATION**: `get_rank_cor`  
+
+**Args:**  
+1. **df_Dutch** (data frame): performance metrics for models evaluated on the Dutch dataset -> Reference.  
+2. **df_German** (data frame): performance metrics for models evaluated on the German dataset -> Non-reference.  
+3. **exclude_model** (character vector): models to exclude from ranking comparison (default: `c("True_signal", "Dummy_R2")`).  
+4. **metrics_list** (character vector): list of metrics to evaluate rank correlation for (default: `c("NSE", "RSE", "RRMSE", "NRMSE", "MAPE", "PR", "MSE", "MinMax", "NDRMSE")`).  
+5. **higher_is_better_list** (named logical vector): for each metric, `TRUE` if higher values indicate better performance, `FALSE` otherwise. Defaults:  
+   - NSE = TRUE, RSE = FALSE, RRMSE = FALSE, NRMSE = FALSE,  
+     MAPE = FALSE, PR = TRUE, MSE = FALSE, MinMax = TRUE, NDRMSE = TRUE.  
+
+**Returns:**  
+- A named numeric vector of Kendall rank correlations between the “true” ranking (based on Dutch MSE) and the proposed rankings from the German dataset, for each metric in `metrics_list`.  
+
+**Main logic:**  
+1. Remove excluded models from the Dutch dataset.  
+2. Determine the **true ranking** of models using Dutch data, sorting by lowest MSE.  
+   - Assign **fixed reference IDs** \(1, 2, \dots, n\) to these models (each ID corresponds to a specific model).  
+3. Remove excluded models from the German dataset.  
+4. For each metric in `metrics_list`:  
+   - Sort German models by the metric, in ascending or descending order depending on `higher_is_better_list`.  
+   - Convert the ordered German model names into **IDs** using the Dutch reference mapping.  
+   - These IDs represent the **German ranking in the Dutch ID system**.  
+   - Compute Kendall rank correlation between the Dutch fixed IDs and the mapped German IDs.  
+5. Return a vector of correlations, named by metric.  
+
+**Example of mapping logic:**  
+- Dutch ranking: `["ModelA", "ModelB", "ModelC"]` -> ranks: `1, 2, 3`  
+- German ranking: `["ModelC", "ModelA", "ModelB"]` -> Mapped German rankings will be `3, 1, 2`  
+- Kendall correlation is computed between `1, 2, 3` and `3, 1, 2`. 
+
+```{r}
+get_rank_cor = function(df_Dutch, df_German, exclude_model = c("True_signal", "Dummy_R2"),
+                        metrics_list = c("NSE", "RSE", "RRMSE", "NRMSE", "MAPE", "PR", "MSE", "MinMax", "NDRMSE"),
+                        higher_is_better_list = c(NSE = TRUE, RSE = FALSE, RRMSE = FALSE, NRMSE = FALSE, 
+                                                       MAPE = FALSE, PR = TRUE, MSE = FALSE, MinMax = TRUE, NDRMSE = TRUE)) {
+  # Step 1: True ranking -> Based on dutch$MSE
+  df_Dutch_5_models = df_Dutch %>% filter(! model %in% exclude_model)
+  
+  true_ranking_names = df_Dutch_5_models[order(df_Dutch_5_models$MSE), ] %>% pull(model)
+  true_ranking_idx = 1:length(true_ranking_names)
+  
+  print("True ranking list")
+  print(true_ranking_names)
+  
+  # Step 2: Proposed ranking
+  df_German_5_models = df_German %>% filter(! model %in% exclude_model)
+  
+  # Initialize results vector
+  results = vector("numeric", length = length(metrics_list))
+  names(results) = metrics_list
+  
+  # Compute rank correlation for each metric
+  for (metric in metrics_list) {
+    proposed_ranking_names = df_German_5_models[order(df_German_5_models[[metric]], decreasing = higher_is_better_list[metric]), ] %>% 
+      pull(model)
+    
+    proposed_ranking_idx = match(true_ranking_names, proposed_ranking_names)
+    
+    print(paste("Proposed ranking for -> ", metric))
+    print(proposed_ranking_names)
+    print(proposed_ranking_idx)
+    
+    # Compute rank correlation
+    results[metric] = cor(true_ranking_idx, proposed_ranking_idx, method = "kendall")
+  }
+  
+  return(results)
+  
+
+}
+
+# linear, e net, svm, xgb, rf <= N low
+# xgb, rf, svm, linear, elastic <= N High
+get_rank_cor(df_Dutch_summary, df_German_summary, metrics_list = c("MSE"), higher_is_better_list = c("MSE"=F))
+```
+
+```{r}
+ranks = get_rank_cor(df_Dutch_summary, df_German_summary)
+ranks
+
+data.frame(metric = names(ranks), ranks = unname(ranks))
+```
+
+
+
+
+# #######################
+
+# 3. Main Simulation Loop
+
+Progress bar
+```{r}
+library(progress)
+```
+
+**CODE EXPLANATION**: Nested simulation over sample size per covariate  
+
+**Purpose:**  
+Repeat the experiment **`B_global` times** to account for sampling variance, while systematically varying the **sample size per covariate** for the German dataset (non-reference).  
+- **Outer loop**: Represents one full replication (i.e. MC run) of the experiment -> Dutch dataset (reference) is held fixed.
+- **Inner loop**: Iterates over different sample sizes per covariate for the German dataset while keeping all other parameters fixed.
+
+```{r}
+# Timing the code
+start.time = Sys.time()
+
+
+# Initialize an empty dataframe to store all results
+RD_sim_df = data.frame()
+sim_model_results_df = data.frame()
+rank_cor_sim_df = data.frame()
+
+# Progress bar
+pb = progress_bar$new(format = "(:spin) [:bar] :percent [Elapsed time: :elapsedfull || Estimated time remaining: :eta]",
+                       total = B_global * n_sample_size_list_global,
+                       complete = "=",   # Completion bar character
+                       incomplete = "-", # Incomplete bar character
+                       current = ">",    # Current bar character
+                       clear = FALSE,    # If TRUE, clears the bar when finish
+                       width = 100)      # Width of the progress bar
+
+for (idx in 1:B_global) {
+  # Generate reference dataset
+  df_Dutch = generate_data(use_original_signal_var = FALSE, noise = noise_global_NL,
+                             n = sample_size_global_NL)
+      
+  df_Dutch_summary = generate_summary_table(X = df_Dutch$X, y = df_Dutch$y)
+  
+  # Loop over condition
+  for (np in sample_size_list_global) {
+
+    ## Changes
+    n_local_DE = as.numeric(np) * ncol(df_German$X)
+    df_German = generate_data(use_original_signal_var = FALSE, noise = noise_global_DE,
+                              n =  n_local_DE )
+
+    # Generate summary tables
+    df_German_summary = generate_summary_table(X = df_German$X, y = df_German$y)
+    
+    # Model performance over curvature ###########
+    # Convert to longer format
+    df_DE_longer = df_German_summary %>% 
+      pivot_longer(cols = -model, names_to = "metric", values_to = "score")
+    df_DE_longer$sample_size_per_cov =  np
+    df_DE_longer$simulation = idx
+    sim_model_results_df = rbind(sim_model_results_df, df_DE_longer)
+
+    # Compute RD metrics  ###########
+    RD_df = calculate_all_RD(df_Dutch = df_Dutch_summary, df_German = df_German_summary)
+    
+    # Add noise and simulation iteration columns
+    RD_df$sample_size_per_cov =  np
+    RD_df$simulation = idx
+    
+    # Append to the main results dataframe
+    RD_sim_df = rbind(RD_sim_df, RD_df)
+    
+    # Compute rank correlation   ###########
+    rank_cor = get_rank_cor(df_Dutch_summary, df_German_summary)
+    rank_cor_df = data.frame(metric = names(rank_cor), rank_cor = unname(rank_cor))
+    rank_cor_df$sample_size_per_cov =  np
+    rank_cor_df$simulation = idx
+    
+    rank_cor_sim_df = rbind(rank_cor_sim_df, rank_cor_df)
+    
+    pb$tick()
+  }
+}
+end.time = Sys.time()
+time.taken = end.time - start.time
+time.taken
+
+# Save factor levels for visualizations
+RD_sim_df$sample_size_per_cov = factor(RD_sim_df$sample_size_per_cov,
+                                            levels = sample_size_list_global)
+
+sim_model_results_df$sample_size_per_cov = factor(sim_model_results_df$sample_size_per_cov, 
+                              levels = sample_size_list_global)
+
+rank_cor_sim_df$sample_size_per_cov = factor(rank_cor_sim_df$sample_size_per_cov,
+                                             levels = sample_size_list_global)
+
+
+# Show results
+RD_sim_df
+```
+
+
+```{r}
+RD_sim_df %>% filter(model == "RF", simulation == 1)
+```
+
+
+Save the code so that I don't have to re-run it each time
+
+```{r}
+# Step 1: Create a timestamp
+timestamp = format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
+
+# Step 2: Construct filename with key metadata
+filename = paste0(
+  timestamp,
+  "_refNoise=", noise_global_NL,
+  "_ref_n=", sample_size_global_NL,
+  "_B=", B_global,
+  ".Rdata"
+)
+
+# Step 3: Save the dataframe
+save(rank_cor_sim_df, file = filename)
+```
+
+
+
+# #######################
+
+# 4. Visualization
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(scales)
+library(ggrepel)
+```
+
+
+## Individual algorithms
+
+```{r}
+sim_1 = sim_model_results_df %>% 
+  filter(simulation == 1)
+
+ggplot(data = sim_1, mapping = aes(x = sample_size_per_cov, y = score, 
+                                   color = model, group = model)) +
+  geom_line(na.rm = T) +
+  facet_wrap(~ metric, scales = "free_y") 
+
+# NO DUMMY
+sim_1_no_dummy = sim_model_results_df %>%
+  filter(simulation == 1, model != "Dummy_R2")
+
+ggplot(data = sim_1_no_dummy, mapping = aes(x = sample_size_per_cov, y = score, color = model, group = model)) +
+  geom_line(na.rm = T) +
+  facet_wrap(~ metric, scales = "free_y") +
+  labs(title = "Sim 1")
+
+# ONLY RF, Linear, True
+sim_1_rf_lin_true = sim_model_results_df %>%
+  filter(simulation == 1, model %in% c("Linear_reg", "XGB", "True_signal"))
+
+ggplot(data = sim_1_rf_lin_true, mapping = aes(x = sample_size_per_cov, y = score, color = model, group = model)) +
+  geom_point(size = 0.8) +
+  geom_line(aes(linetype = model), alpha = 1, linetype = "solid") +
+  # geom_line(na.rm = T) +
+  facet_wrap(~ metric, scales = "free_y")
+```
+
+```{r}
+sim_1_MSE = sim_model_results_df %>% 
+  filter(simulation == 1, model != "Dummy_R2", metric == "MSE")
+
+ggplot(sim_1_MSE, aes(x = sample_size_per_cov, y = score, color = model, group = model)) +
+  geom_line()
+```
+
+Plot over distribution
+
+```{r}
+# Summarize: mean and sd of score over simulations
+summary_df = sim_model_results_df %>%
+  filter(model %in% c("Linear_reg", "XGB", "True_signal")) %>%
+  group_by(model, metric, sample_size_per_cov) %>%
+  summarise(
+    mean_score = mean(score, na.rm = TRUE),
+    sd_score = sd(score, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Plot: with ribbon for ± SD
+ggplot(summary_df, aes(x = sample_size_per_cov, y = mean_score, color = model, fill = model, group = model)) +
+  geom_line() + 
+  geom_point(size = 0.6) +
+  geom_ribbon(aes(ymin = mean_score - sd_score, ymax = mean_score + sd_score), 
+              alpha = 0.2, color = NA) +
+  facet_wrap(~ metric, scales = "free_y") +
+    labs(
+    title = "Model Performance Over Sample Size Levels",
+    subtitle = paste("Mean score ± 1 SD over", B_global, "simulations"),
+    x = "Sample size per covariate (levels)",
+    y = "Score",
+    color = "Model",
+    fill = "Model"
+  ) +
+  theme_minimal() +
+    theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+
+### Thesis plot
+
+```{r}
+# Fix legend
+selected_model_labels = c("True_signal" = "Oracle",
+                 "Linear_reg" = "Linear Regression",
+                 "XGB" = "XGBoost")
+
+
+algo_plot = ggplot(summary_df %>% filter(metric %in% c("MSE", "NSE", "NRMSE", "RRMSE", "PR")), 
+       aes(x = sample_size_per_cov, y = mean_score, color = model, fill = model, group = model)) +
+  geom_line() +
+  geom_point(show.legend = F, size = 0.6) +
+  geom_ribbon(aes(ymin = mean_score - sd_score, ymax = mean_score + sd_score), 
+              alpha = 0.2, color = NA, show.legend = F) +
+  facet_wrap(~ metric, scales = "free_y") +
+  labs(
+    title = "Algorithm Performance Across Sample Sizes",
+    subtitle = paste0("Mean performance ± 1 SD over ", B_global, " simulations, with noise proportion ", 
+                      noise_global_DE,
+                      "\nTrue function: ", tru_function_string),
+    x = "Sample Size per Covariate (levels)",
+    y = "Metric Performance Score",
+    color = "Model",
+    fill = "Model"
+  ) +
+  scale_color_discrete(labels = selected_model_labels,
+                     name = "Selected Algorithm") +
+  theme_minimal() +
+    theme_minimal() +
+    theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+algo_plot
+
+```
+
+```{r, dpi=300, fig.width=8, fig.height=5}
+algo_plot +
+  labs(
+    title = "Performance across Sample Sizes and Algorithms",
+    subtitle = paste0("Mean performance ± 1 SD over ", B_global, " Monte Carlo simulations"),
+    x = "Sample Size per Covariate (n/p)",
+    y = "Metric Performance Score",
+    color = "Model",
+    fill = "Model"
+  )
+```
+
+
+
+## Ranks
+
+```{r}
+sim_1 = rank_cor_sim_df %>% 
+  filter(simulation == 1)
+
+ggplot(data = sim_1, mapping = aes(x = sample_size_per_cov, y = rank_cor, color = metric)) +
+  geom_point(na.rm = T) +
+  facet_wrap(~ metric, scales = "free_y")
+
+```
+
+```{r}
+# Summarize: mean and sd of ranks correlation over simulations
+summary_df = rank_cor_sim_df %>%
+  group_by(metric, sample_size_per_cov) %>%
+  summarise(
+    mean_rank_cor = mean(rank_cor, na.rm = TRUE),
+    sd_rank_cor = sd(rank_cor, na.rm = TRUE),
+    q5_rank = quantile(rank_cor, 0.05),
+    q95_rank = quantile(rank_cor, 0.95),
+    .groups = "drop"
+  )
+
+summary_df
+
+# Plot: with ribbon for ± SD
+ggplot(summary_df, aes(x = sample_size_per_cov , 
+                       y = mean_rank_cor, color = metric, fill = metric, group = metric)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_rank_cor - sd_rank_cor, 
+                  ymax = mean_rank_cor + sd_rank_cor),
+              width = 0.3) + 
+  geom_ribbon(aes(ymin = mean_rank_cor - sd_rank_cor, ymax = mean_rank_cor + sd_rank_cor),
+              alpha = 0.1, color = NA) +
+  facet_wrap(~ metric) +
+    labs(
+    title = "Rank Correlation Over Sample Size",
+    subtitle = paste0("Mean score ± 1 SD over ", B_global, " simulations, with noise proportion ", 
+                      noise_global_DE,
+                      "\nTrue function: ", tru_function_string,
+                      "\nNL is reference dataset with n/p = ", sample_size_global_NL/ncol(df_Dutch$X)),
+    x = "Sample Size per Covariate (levels)",
+    y = "Rank Correlation",
+    color = "Model",
+    fill = "Model"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(limits = c(-1.2, 1.2)) +
+  theme(legend.position = "none") 
+```
+
+```{r}
+summary_df %>% 
+  filter(metric == "MSE")
+```
+
+### Thesis plots
+
+Full caption (for myself)
+
+```{r}
+viz_df = rank_cor_sim_df %>% filter(metric == "MSE")
+
+# Order by tau (increasing) within each group
+viz_df = viz_df %>% group_by(sample_size_per_cov) %>% 
+  arrange(sample_size_per_cov, rank_cor) %>% 
+  mutate(id_per_group = row_number())
+
+# Color the bottom 3 draws (6% of 50) within each group blue, the rest grey
+n_outliers = 3  # Bottom 3 draws = 6% of 50 draws
+viz_df = viz_df %>% 
+  mutate(outliers = ifelse(id_per_group %in% 1:n_outliers, "Bottom 3", "Top 47"))
+
+# Convert sample_size_per_cov to factor for discrete x-axis
+viz_df$sample_size_per_cov_factor = factor(viz_df$sample_size_per_cov, 
+                                           levels = sort(unique(viz_df$sample_size_per_cov)))
+
+# Filter data for each layer
+grey_data = viz_df %>% filter(outliers == "Top 47")
+blue_data = viz_df %>% filter(outliers == "Bottom 3")
+
+# Create boxplot version
+p_boxplot = ggplot(viz_df, aes(x = sample_size_per_cov_factor, y = rank_cor)) +
+  geom_hline(yintercept = 0.4, color = "red", linetype = "dashed") +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(data = grey_data, aes(color = outliers), 
+              width = 0.2, height = 0, alpha = 0.6, size = 1) +
+  geom_jitter(data = blue_data, aes(color = outliers), 
+              width = 0.2, height = 0, alpha = 1, size = 1.5) +
+  scale_color_manual(values = c("Bottom 3" = "blue", "Top 47" = "grey50")) +
+  labs(color = paste0("Rank within\neach n/p group\n(", B_global, " draws)")) +
+  theme_minimal() +
+  labs(
+    title = "Rank Stability Across Sample Sizes (Discrete Levels)",
+    subtitle = paste0("Each dot = 1 Kendall's τ from 1 draw; ", B_global, " Monte Carlo draws per n/p level",
+                      "\nTrue function: ", tru_function_string, " with noise proportion ", noise_global_NL,
+                      "\nReference dataset has n/p = ", sample_size_global_NL/ncol(df_Dutch$X)),
+    x = "Sample Size per Covariate (n/p) - Discrete Levels",
+    y = "Kendall's τ",
+    caption = paste(
+      "Dashed red line indicates τ = 0.4 decision threshold.",
+      "\nIf all blue dots are strictly BELOW (and not on) the red line, then rank similarity across datasets is rejected.",
+      "\nBlue dots show bottom 3 draws (6% of 50) within each n/p group."
+    ))
+
+p_boxplot
+```
+
+
+Stripped down plot for thesis -> Saved in HD
+
+```{r, dpi=300, fig.width=8, fig.height=5}
+p_boxplot +
+    labs(
+    title = "Rank Stability Across Sample Sizes",
+    x = "Sample Size per Covariate (n/p)",
+    y = "Kendall's τ",
+    subtitle = paste0("With n/p=",sample_size_global_NL/ncol(df_Dutch$X) ," as reference group" ), caption = "")
+```
+
+
+# 5. Binomial proportion test
+
+```{r}
+# Need to roun rank cor to solve floating point issues
+sample_prop_name = 'sample prop P(tau >= 0.4)'
+
+z_score_table = viz_df %>% group_by(sample_size_per_cov) %>% 
+  summarise(sample_prop_name = mean(round(rank_cor, 10) >= 0.4)) %>% 
+  mutate("sample prop < 0.899" = ifelse(round(sample_prop_name, 10) < 0.899, "NOT similar", "similar"))
+
+names(z_score_table) = c("sample_size_per_cov", 'sample prop P(tau >= 0.4)', "sample prop < 0.899" )
+z_score_table
+```
+
+
+
